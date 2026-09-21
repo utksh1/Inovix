@@ -9,7 +9,6 @@ const {
 const { protect } = require('../../middleware/auth.middleware');
 const { validateBody } = require('../../middleware/validation.middleware');
 const { googleLoginSchema, devLoginSchema } = require('@nosh/validation');
-const { z } = require('zod');
 const {
   googleLoginRateLimit,
   devLoginRateLimit,
@@ -35,7 +34,7 @@ const IS_DEV = process.env.NODE_ENV === 'development';
 
 // Public routes — each gets its own per-endpoint rate limit (INO-010).
 router.post('/google', googleLoginRateLimit, validateBody(googleLoginSchema), googleLogin);
-router.post('/refresh', refreshRateLimit, validateBody(z.object({ refreshToken: z.string() }).strict()), refresh);
+router.post('/refresh', refreshRateLimit, refresh);
 
 if (IS_DEV && ENABLE_DEV_LOGIN) {
   router.post('/dev-login', devLoginRateLimit, validateBody(devLoginSchema), devLogin);

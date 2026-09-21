@@ -1,4 +1,4 @@
-import client, { setTokens, clearTokens, setOnAuthFailed, getAccessToken, getRefreshToken } from '../api/client';
+import client, { setTokens, clearTokens, setOnAuthFailed, getAccessToken } from '../api/client';
 
 export const authService = {
   /**
@@ -7,10 +7,10 @@ export const authService = {
   async devLogin(email, password) {
     const res = await client.post('/auth/dev-login', { email, password });
     if (res.data.success) {
-      const { user, accessToken, refreshToken } = res.data.data;
-      setTokens(accessToken, refreshToken);
+      const { user, accessToken } = res.data.data;
+      setTokens(accessToken);
       localStorage.setItem('user', JSON.stringify(user));
-      return { user, accessToken, refreshToken };
+      return { user, accessToken };
     }
     throw new Error(res.data.message || 'Dev login failed');
   },
@@ -21,10 +21,10 @@ export const authService = {
   async googleLogin(credential) {
     const res = await client.post('/auth/google', { credential });
     if (res.data.success) {
-      const { user, accessToken, refreshToken } = res.data.data;
-      setTokens(accessToken, refreshToken);
+      const { user, accessToken } = res.data.data;
+      setTokens(accessToken);
       localStorage.setItem('user', JSON.stringify(user));
-      return { user, accessToken, refreshToken };
+      return { user, accessToken };
     }
     throw new Error(res.data.message || 'Google login failed');
   },
@@ -33,6 +33,14 @@ export const authService = {
    * Fetch the current user (requires auth). Uses the access token in the
    * client's memory store; the interceptor auto-refreshes if it's expired.
    */
+  async refresh() {
+    const res = await client.post('/auth/refresh');
+    const { user, accessToken } = res.data.data;
+    setTokens(accessToken);
+    localStorage.setItem('user', JSON.stringify(user));
+    return { user, accessToken };
+  },
+
   async me() {
     const res = await client.get('/auth/me');
     return res.data.data.user;
@@ -43,7 +51,7 @@ export const authService = {
    */
   async logout() {
     try {
-      await client.post('/auth/logout', { refreshToken: getRefreshToken() });
+      await client.post('/auth/logout');
     } catch (e) {
       // Even if the server call fails (network error, expired token), clear local state
     }
@@ -52,5 +60,4 @@ export const authService = {
 
   setOnAuthFailed,
   getAccessToken,
-  getRefreshToken,
 };

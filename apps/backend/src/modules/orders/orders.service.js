@@ -108,6 +108,32 @@ async function getUserOrders(studentId, { page, pageSize, status } = {}) {
   return ordersRepo.findByUserId(studentId, { page, pageSize, status });
 }
 
+async function cancelOrder(studentId, orderId) {
+  const order = await ordersRepo.findById(orderId);
+  if (!order) throw { statusCode: 404, message: 'Order not found' };
+  if (order.studentId !== studentId) throw { statusCode: 403, message: 'You are not authorized to cancel this order' };
+  if (order.status !== ORDER_STATUS.PENDING) {
+    throw { statusCode: 400, code: ERROR_CODES.INVALID_TRANSITION, message: 'Orders can only be cancelled before the outlet accepts them' };
+  }
+
+  const before = { status: order.status };
+  const updated = await ordersRepo.updateStatus(
+    orderId,
+    order.status,
+    ORDER_STATUS.CANCELLED,
+    studentId,
+    { reason: 'Cancelled by customer' }
+  );
+  if (!updated) {
+    const error = new Error('Order was modified by another request; please retry');
+    error.statusCode = 409;
+    error.code = ERROR_CODES.CONFLICT;
+    throw error;
+  }
+
+  return { updated, before };
+}
+
 async function getOrderById(studentId, orderId) {
   const order = await ordersRepo.findById(orderId);
   if (!order) throw { statusCode: 404, message: 'Order not found' };
@@ -156,7 +182,13 @@ async function updateOrderStatus(outletId, orderId, status, actorId, reason) {
   }
 
   const before = { status: order.status };
-  const updated = await ordersRepo.updateStatus(orderId, status, actorId, { reason });
+  const updated = await ordersRepo.updateStatus(orderId, order.status, status, actorId, { reason });
+  if (!updated) {
+    const error = new Error('Order was modified by another request; please retry');
+    error.statusCode = 409;
+    error.code = ERROR_CODES.CONFLICT || 'CONFLICT';
+    throw error;
+  }
   return { updated, before };
 }
 
@@ -167,6 +199,7 @@ module.exports = {
   getOutletOrders,
   getOutletOrder,
   updateOrderStatus,
+  cancelOrder,
   generateOrderNumber,
   generatePickupCode,
 };

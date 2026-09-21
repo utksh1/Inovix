@@ -23,26 +23,19 @@ const client = axios.create({
   withCredentials: true,
 });
 
-// In-memory token store (synchronized with localStorage by AuthContext)
-let accessToken = localStorage.getItem('accessToken') || null;
-let refreshToken = localStorage.getItem('refreshToken') || null;
+// Access tokens live only in memory. Refresh tokens are held by the backend
+// in an HttpOnly cookie and are never exposed to JavaScript.
+let accessToken = null;
 let onAuthFailed = null; // callback set by AuthContext
 
-export function setTokens(access, refresh) {
-  accessToken = access;
-  refreshToken = refresh;
-  if (access) localStorage.setItem('accessToken', access); else localStorage.removeItem('accessToken');
-  if (refresh) localStorage.setItem('refreshToken', refresh); else localStorage.removeItem('refreshToken');
+export function setTokens(access) {
+  accessToken = access || null;
 }
 
 export function getAccessToken() { return accessToken; }
-export function getRefreshToken() { return refreshToken; }
 
 export function clearTokens() {
   accessToken = null;
-  refreshToken = null;
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
 }
 
@@ -61,12 +54,10 @@ let refreshPromise = null;
 
 async function refreshOnce() {
   if (refreshPromise) return refreshPromise;
-  if (!refreshToken) throw new Error('No refresh token');
-
-  refreshPromise = axios.post(`${API_URL}/auth/refresh`, { refreshToken })
+  refreshPromise = axios.post(`${API_URL}/auth/refresh`, {}, { withCredentials: true })
     .then((res) => {
-      const { accessToken: newAccess, refreshToken: newRefresh } = res.data.data;
-      setTokens(newAccess, newRefresh);
+      const { accessToken: newAccess } = res.data.data;
+      setTokens(newAccess);
       return newAccess;
     })
     .finally(() => { refreshPromise = null; });

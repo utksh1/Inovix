@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Package, RotateCcw } from 'lucide-react';
 import Header from '../../components/layout/Header';
@@ -21,7 +21,13 @@ const STATUS_CLASSES = {
 
 const Orders = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [activeFilter, setActiveFilter] = useState('All time');
+
+  const cancelMutation = useMutation({
+    mutationFn: (orderId) => ordersService.cancelOrder(orderId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['orders', 'student', 'list'] }),
+  });
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['orders', 'student', 'list'],
@@ -158,7 +164,22 @@ const Orders = () => {
                       <span className="text-xs text-muted-foreground">Total</span>
                       <span className="text-lg font-bold text-foreground">₹{Number(order.totalAmount)}</span>
                     </div>
-                    {order.status === 'COMPLETED' && (
+                    <div className="flex items-center gap-2">
+                      {order.status === 'PENDING' && (
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          disabled={cancelMutation.isPending}
+                          className="px-4 py-2 border border-destructive/30 text-destructive text-sm font-semibold rounded-lg hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                          onClick={() => {
+                            if (window.confirm('Cancel this order? Your payment will be refunded.')) {
+                              cancelMutation.mutate(order.id);
+                            }
+                          }}
+                        >
+                          {cancelMutation.isPending && cancelMutation.variables === order.id ? 'Cancelling...' : 'Cancel order'}
+                        </motion.button>
+                      )}
+                      {order.status === 'COMPLETED' && (
                       <motion.button
                         whileTap={{ scale: 0.95 }}
                         className="px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-lg hover:bg-primary-hover transition-colors inline-flex items-center gap-1.5 shadow-sm"
@@ -167,7 +188,8 @@ const Orders = () => {
                         <RotateCcw className="w-3.5 h-3.5" />
                         Order again
                       </motion.button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               );

@@ -203,14 +203,23 @@ async function verifyRazorpayPayment({ razorpayOrderId, razorpayPaymentId, razor
     throw { statusCode: 400, code: 'PAYMENT_FAILED', message: 'Invalid payment signature' };
   }
 
-  // Mark payment as PAID (guarded by the state check above)
-  const updated = await prisma.payment.update({
-    where: { id: payment.id },
+  const claimed = await prisma.payment.updateMany({
+    where: { id: payment.id, status: PAYMENT_STATUS.PENDING },
     data: {
       status: PAYMENT_STATUS.PAID,
       razorpayPaymentId,
       razorpaySignature,
     },
+  });
+
+  if (claimed.count !== 1) {
+    const current = await prisma.payment.findUnique({ where: { id: payment.id }, include: { order: true } });
+    if (current?.status === PAYMENT_STATUS.PAID) return { ...current, idempotent: true };
+    throw { statusCode: 409, code: 'PAYMENT_STATE_RACE', message: 'Payment state changed while verifying' };
+  }
+
+  const updated = await prisma.payment.findUnique({
+    where: { id: payment.id },
     include: { order: true },
   });
 
@@ -222,7 +231,6 @@ async function verifyRazorpayPayment({ razorpayOrderId, razorpayPaymentId, razor
     after: { status: PAYMENT_STATUS.PAID },
   });
 
-  // Emit socket event to outlet so the counter staff get the new order notification
   const { emitOrderEvent } = require('../../lib/socket');
   emitOrderEvent('order:new', payment.order.outletId, { order: updated.order });
 
@@ -273,17 +281,22 @@ async function handleRazorpayWebhook(rawBody, signature, webhookSecret) {
   // Idempotent: if already PAID, just ack
   if (payment.status === PAYMENT_STATUS.PAID) return { alreadyPaid: true };
 
-  await prisma.payment.update({
-    where: { id: payment.id },
+  const claimed = await prisma.payment.updateMany({
+    where: { id: payment.id, status: PAYMENT_STATUS.PENDING },
     data: {
       status: PAYMENT_STATUS.PAID,
       razorpayPaymentId,
     },
   });
 
-  // Emit socket event
+  if (claimed.count !== 1) {
+    const current = await prisma.payment.findUnique({ where: { id: payment.id } });
+    return current?.status === PAYMENT_STATUS.PAID ? { alreadyPaid: true } : { ignored: true };
+  }
+
+  const updatedOrder = await prisma.order.findUnique({ where: { id: payment.order.id } });
   const { emitOrderEvent } = require('../../lib/socket');
-  emitOrderEvent('order:new', payment.order.outletId, { order: payment.order });
+  emitOrderEvent('order:new', payment.order.outletId, { order: updatedOrder });
 
   return { verified: true };
 }
@@ -296,9 +309,9 @@ async function handleRazorpayWebhook(rawBody, signature, webhookSecret) {
  *   - If trigger is null (READY → CANCELLED, no-show): no refund.
  *   - Else: issues a full refund via Razorpay, records a Refund row.
  */
-async function processAutoRefundOnTransition(orderId, fromStatus, toStatus, actorId) {
+async function processAutoRefundOnTransition(orderId, fromStatus, toStatus, actorId, triggerOverride = null) {
   const triggerKey = `${fromStatus}_TO_${toStatus}`;
-  const trigger = REFUND_TRIGGERS[triggerKey];
+  const trigger = triggerOverride || REFUND_TRIGGERS[triggerKey];
   if (!trigger) return null; // no refund for this transition
 
   const order = await prisma.order.findUnique({

@@ -4,7 +4,7 @@
  * Spec ref:
  *   - AuditLog retention: §14 decision 8 — 90 days rolling
  *   - RefreshToken purge: §3.2 Layer 1 — expired tokens older than 30d
- *   - READY → COMPLETED pickup timeout: §4 entity #13 `pickupTimeoutMins`
+ *   - READY → CANCELLED pickup timeout: §4 entity #13 `pickupTimeoutMins`
  *     (default 30 min) — spec §8.6 "READY → CANCELLED-after-pickup-timeout
  *     is a no-show case with NO refund"
  *
@@ -102,29 +102,27 @@ async function processPickupTimeouts() {
     const cutoff = new Date(order.readyAt.getTime() + timeoutMins * 60 * 1000);
     if (now < cutoff) continue; // still within pickup window
 
-    // Auto-transition READY → COMPLETED (no refund — student picked up... or no-showed)
-    // Per spec §8.6: READY→CANCELLED is the no-show case (NO refund).
-    // We use COMPLETED here as the "item picked up or expired" cleanup.
-    // If the spec calls for CANCELLED, swap the line below.
     const timeline = JSON.parse(order.timeline || '[]');
-    timeline.push({ status: ORDER_STATUS.COMPLETED, at: now.toISOString(), by: 'cron:pickup-timeout' });
+    timeline.push({ status: ORDER_STATUS.CANCELLED, at: now.toISOString(), by: 'cron:pickup-timeout' });
 
-    await prisma.order.update({
-      where: { id: order.id },
+    const updated = await prisma.order.updateMany({
+      where: { id: order.id, status: ORDER_STATUS.READY },
       data: {
-        status: ORDER_STATUS.COMPLETED,
-        completedAt: now,
+        status: ORDER_STATUS.CANCELLED,
+        cancelledAt: now,
+        cancelReason: 'Pickup window expired',
         timeline: JSON.stringify(timeline),
       },
     });
+    if (updated.count !== 1) continue;
 
     // Create a notification for the student (order auto-completed)
     await prisma.notification.create({
       data: {
         userId: order.studentId,
-        type: 'ORDER_COMPLETED',
-        title: 'Order auto-completed',
-        message: `Order ${order.orderNumber} was auto-completed after the pickup window elapsed (${timeoutMins} min).`,
+        type: 'ORDER_CANCELLED',
+        title: 'Order cancelled',
+        message: `Order ${order.orderNumber} was cancelled after the pickup window elapsed (${timeoutMins} min).`,
         payload: JSON.stringify({ orderId: order.id, reason: 'pickup_timeout', timeoutMins }),
         orderId: order.id,
       },
@@ -136,7 +134,7 @@ async function processPickupTimeouts() {
       targetType: 'Order',
       targetId: order.id,
       before: { status: ORDER_STATUS.READY, readyAt: order.readyAt },
-      after: { status: ORDER_STATUS.COMPLETED, timeoutMins },
+      after: { status: ORDER_STATUS.CANCELLED, timeoutMins },
     });
 
     completed++;
@@ -144,16 +142,16 @@ async function processPickupTimeouts() {
     try {
       const { emitOrderEvent } = require('./socket');
       emitOrderEvent('order:status:changed', `outlet:${order.outletId}`, {
-        order: { id: order.id, status: ORDER_STATUS.COMPLETED, reason: 'pickup_timeout' },
+        order: { id: order.id, status: ORDER_STATUS.CANCELLED, reason: 'pickup_timeout' },
       });
       emitOrderEvent('order:status:changed', `student:${order.studentId}`, {
-        order: { id: order.id, status: ORDER_STATUS.COMPLETED, reason: 'pickup_timeout' },
+        order: { id: order.id, status: ORDER_STATUS.CANCELLED, reason: 'pickup_timeout' },
       });
     } catch { /* socket not initialized */ }
   }
 
   if (completed > 0) {
-    console.log(`[cron:pickup-timeout] auto-completed ${completed} READY orders past their pickup window`);
+    console.log(`[cron:pickup-timeout] cancelled ${completed} READY orders past their pickup window`);
   }
   return completed;
 }

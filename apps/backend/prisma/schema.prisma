@@ -314,7 +314,7 @@ model Payment {
   orderId           String    @unique
   gatewayRef        String?   // Razorpay order id / payment id
   razorpayPaymentId String?
-  razorpayOrderId   String?
+  razorpayOrderId   String?   @unique
   razorpaySignature String?
   amount            Decimal   
   status            String    @default("PENDING") // PENDING | PAID | FAILED | REFUNDED

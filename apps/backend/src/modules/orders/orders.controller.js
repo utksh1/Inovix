@@ -2,6 +2,7 @@ const ordersService = require('./orders.service');
 const { audit } = require('../../lib/audit');
 const { emitOrderEvent } = require('../../lib/socket');
 const { ORDER_STATUS } = require('../../lib/constants');
+const { processAutoRefundOnTransition } = require('../payments/payments.service');
 
 async function createOrder(req, res, next) {
   try {
@@ -17,15 +18,37 @@ async function createOrder(req, res, next) {
       req,
     });
 
-    // Notify the outlet in real-time
-    emitOrderEvent('order:new', order.outletId, { order });
-
     res.status(201).json({ success: true, data: order });
   } catch (error) {
     next(error);
   }
 }
 
+async function cancelOrder(req, res, next) {
+  try {
+    const { updated, before } = await ordersService.cancelOrder(req.user.id, req.params.orderId);
+
+    await processAutoRefundOnTransition(req.params.orderId, before.status, ORDER_STATUS.CANCELLED, req.user.id, 'CUSTOMER_CANCEL');
+
+    await audit({
+      actorId: req.user.id,
+      action: 'ORDER_CANCELLED_BY_CUSTOMER',
+      targetType: 'Order',
+      targetId: req.params.orderId,
+      before,
+      after: { status: updated.status },
+      req,
+    });
+
+    emitOrderEvent('order:status:changed', `student:${updated.studentId}`, { order: updated });
+    emitOrderEvent('order:status:changed', updated.outletId, { order: updated });
+    require('../notifications/notifications.service').createForOrder(updated, req.user.id);
+
+    res.status(200).json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+}
 async function getUserOrders(req, res, next) {
   try {
     const studentId = req.user.id;
@@ -103,6 +126,10 @@ async function updateOrderStatus(req, res, next) {
       req,
     });
 
+    if (status === ORDER_STATUS.REJECTED || status === ORDER_STATUS.CANCELLED) {
+      await processAutoRefundOnTransition(orderId, before.status, status, req.user.id);
+    }
+
     // Real-time updates to both outlet and student
     emitOrderEvent('order:status:changed', outletId, { order: updated });
     emitOrderEvent('order:status:changed', `student:${updated.studentId}`, { order: updated });
@@ -125,6 +152,7 @@ async function updateOrderStatus(req, res, next) {
 module.exports = {
   createOrder,
   getUserOrders,
+  cancelOrder,
   getOrderById,
   getOutletOrders,
   getOutletOrder,

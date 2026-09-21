@@ -16,6 +16,11 @@ export const ordersService = {
     return res.data.data;
   },
 
+  async cancelOrder(orderId) {
+    const res = await client.post(`/orders/${orderId}/cancel`);
+    return res.data.data;
+  },
+
   // Outlet-side
   async listOutletOrders({ page, pageSize, status } = {}) {
     const res = await client.get('/outlet/orders', { params: { page, pageSize, status } });

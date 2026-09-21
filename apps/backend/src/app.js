@@ -32,6 +32,29 @@ app.use(helmet());
 // accepted only when NODE_ENV !== 'production' so dev workflows keep working.
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const isProduction = process.env.NODE_ENV === 'production';
+
+function safeDecode(val) {
+  try {
+    return decodeURIComponent(val);
+  } catch {
+    return val;
+  }
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  if (!header) return {};
+  return Object.fromEntries(header.split(';').map((part) => {
+    const index = part.indexOf('=');
+    if (index === -1) return [part.trim(), ''];
+    return [part.slice(0, index).trim(), safeDecode(part.slice(index + 1).trim())];
+  }));
+}
+
+app.use((req, _res, next) => {
+  req.cookies = parseCookies(req);
+  next();
+});
 const corsOrigins = isProduction
   ? [FRONTEND_URL]
   : Array.from(new Set([FRONTEND_URL, 'http://localhost:5173', 'http://localhost:3001']));

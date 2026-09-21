@@ -86,13 +86,11 @@ async function findByOrderNumber(orderNumber) {
   return prisma.order.findUnique({ where: { orderNumber }, include: ORDER_INCLUDE });
 }
 
-async function updateStatus(orderId, status, actorId, extra = {}) {
+async function updateStatus(orderId, expectedStatus, status, actorId, extra = {}) {
   const now = new Date();
-  // Read current
   const existing = await prisma.order.findUnique({ where: { id: orderId } });
-  if (!existing) return null;
+  if (!existing || existing.status !== expectedStatus) return null;
 
-  // Append to timeline
   const timeline = JSON.parse(existing.timeline || '[]');
   timeline.push({ status, at: now.toISOString(), by: actorId, ...extra });
 
@@ -100,7 +98,6 @@ async function updateStatus(orderId, status, actorId, extra = {}) {
     status,
     timeline: JSON.stringify(timeline),
   };
-  // Set timestamps per spec §4 entity #13
   if (status === 'ACCEPTED') data.acceptedAt = now;
   if (status === 'READY') data.readyAt = now;
   if (status === 'COMPLETED') data.completedAt = now;
@@ -109,7 +106,13 @@ async function updateStatus(orderId, status, actorId, extra = {}) {
     if (extra.reason) data.cancelReason = extra.reason;
   }
 
-  return prisma.order.update({ where: { id: orderId }, data, include: ORDER_INCLUDE });
+  const claimed = await prisma.order.updateMany({
+    where: { id: orderId, status: expectedStatus },
+    data,
+  });
+  if (claimed.count !== 1) return null;
+
+  return prisma.order.findUnique({ where: { id: orderId }, include: ORDER_INCLUDE });
 }
 
 async function countByStatus(outletId) {

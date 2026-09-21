@@ -16,5 +16,6 @@ router.get('/', validateQuery(z.object({
   status: z.string().optional(),
 })), ordersController.getUserOrders);
 router.get('/:orderId', ordersController.getOrderById);
+router.post('/:orderId/cancel', ordersController.cancelOrder);
 
 module.exports = router;
